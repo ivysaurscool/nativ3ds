@@ -8,6 +8,9 @@ using PocketRecomp.Core.Display;
 using PocketRecomp.Core.Ir;
 using PocketRecomp.Core.Runtime;
 using PocketRecomp.Core.Projects;
+using PocketRecomp.Core.Thumb;
+using PocketRecomp.Core.Containers;
+using PocketRecomp.Core.Executables;
 
 return await PocketCli.RunAsync(args);
 
@@ -26,6 +29,9 @@ internal static class PocketCli
             return args[0].ToLowerInvariant() switch
             {
                 "inspect" => await InspectAsync(args[1..]),
+                "inspect-thumb" => await InspectThumbAsync(args[1..]),
+                "inspect-container" => await InspectContainerAsync(args[1..]),
+                "inspect-elf" => await InspectElfAsync(args[1..]),
                 "recompile" => await RecompileAsync(args[1..]),
                 "analyze-project" => await AnalyzeProjectAsync(args[1..]),
                 "layout" => Layout(args[1..]),
@@ -69,6 +75,55 @@ internal static class PocketCli
         var block = ArmToIrTranslator.TranslateBlock(code, baseAddress, offset);
         await File.WriteAllTextAsync(output, CppEmitter.Emit(block));
         Console.WriteLine($"Translated block 0x{block.Address:X8}: {block.Instructions.Count} IR operations -> {output}");
+        return 0;
+    }
+
+    private static async Task<int> InspectThumbAsync(string[] args)
+    {
+        if (args.Length < 1) throw new ArgumentException("inspect-thumb requires a raw, authorized Thumb code file.");
+        var code = await File.ReadAllBytesAsync(args[0]);
+        var baseAddress = GetHexOption(args, "--base", 0x0010_0000u);
+        var offset = checked((int)GetHexOption(args, "--offset", 0));
+        var count = checked((int)GetUIntOption(args, "--count", 32));
+        if ((offset & 1) != 0 || offset < 0 || offset > code.Length)
+            throw new ArgumentException("--offset must be halfword aligned and within the file.");
+
+        Console.WriteLine("address    encoding  size op                          operands");
+        for (var cursor = offset; cursor + 2 <= code.Length && count-- > 0;)
+        {
+            var instruction = ThumbDecoder.Decode(code.AsSpan(cursor), baseAddress + (uint)cursor);
+            Console.WriteLine($"{instruction.Address:X8}   {instruction.Encoding:X8}  {instruction.Size,2}   {instruction.Op,-27} {FormatThumbOperands(instruction)}");
+            cursor += instruction.Size;
+        }
+        return 0;
+    }
+
+    private static async Task<int> InspectContainerAsync(string[] args)
+    {
+        if (args.Length < 1) throw new ArgumentException("inspect-container requires a local .3ds or NCCH file.");
+        var info = await ThreeDsContainer.InspectAsync(args[0]);
+        Console.WriteLine($"File:          {info.FilePath}");
+        Console.WriteLine($"Type:          {info.Kind}");
+        Console.WriteLine($"Header magic:  {info.Magic}");
+        Console.WriteLine($"File size:     {info.FileSize} bytes");
+        if (info.DeclaredSize is { } declared)
+            Console.WriteLine($"Declared size: {declared} bytes ({(info.SizeMatches ? "present" : "truncated")})");
+        Console.WriteLine("Decryption:    not attempted; PocketRecomp never accepts or stores console/game keys");
+        return info.Kind == ThreeDsContainerKind.Unknown || !info.SizeMatches ? 3 : 0;
+    }
+
+    private static async Task<int> InspectElfAsync(string[] args)
+    {
+        if (args.Length < 1) throw new ArgumentException("inspect-elf requires an authorized ARM ELF file.");
+        var image = await Elf32Reader.ReadAsync(args[0]);
+        Console.WriteLine($"Entry point: 0x{image.EntryPoint:X8} ({image.EntryMode})");
+        Console.WriteLine($"ARM flags:   0x{image.Flags:X8}");
+        Console.WriteLine($"Segments:    {image.LoadSegments.Count}");
+        foreach (var segment in image.LoadSegments)
+        {
+            var permissions = $"{(segment.Readable ? 'R' : '-')}{(segment.Writable ? 'W' : '-')}{(segment.Executable ? 'X' : '-')}";
+            Console.WriteLine($"  0x{segment.VirtualAddress:X8}-0x{(ulong)segment.VirtualAddress + segment.MemorySize:X8} {permissions} file={segment.FileSize} memory={segment.MemorySize}");
+        }
         return 0;
     }
 
@@ -162,6 +217,24 @@ internal static class PocketCli
         _ => ""
     };
 
+    private static string FormatThumbOperands(ThumbInstruction i) => i.Op switch
+    {
+        ThumbOp.MoveImmediate or ThumbOp.CompareImmediate or ThumbOp.AddImmediate8 or ThumbOp.SubtractImmediate8
+            => $"r{i.Rd}, #0x{i.Immediate:X}",
+        ThumbOp.AddImmediate3 or ThumbOp.SubtractImmediate3
+            => $"r{i.Rd}, r{i.Rn}, #0x{i.Immediate:X}",
+        ThumbOp.AddRegister or ThumbOp.SubtractRegister => $"r{i.Rd}, r{i.Rn}, r{i.Rm}",
+        ThumbOp.LogicalShiftLeftImmediate or ThumbOp.LogicalShiftRightImmediate or ThumbOp.ArithmeticShiftRightImmediate
+            => $"r{i.Rd}, r{i.Rm}, #{i.Immediate}",
+        ThumbOp.LoadLiteral => $"r{i.Rd}, [pc] ; 0x{i.Target:X8}",
+        ThumbOp.LoadWordImmediate or ThumbOp.StoreWordImmediate => $"r{i.Rd}, [r{i.Rn}, #0x{i.Immediate:X}]",
+        ThumbOp.Branch or ThumbOp.BranchLink or ThumbOp.BranchConditional => $"0x{i.Target:X8}",
+        ThumbOp.BranchExchange => $"r{i.Rm}",
+        ThumbOp.Push or ThumbOp.Pop => $"register-list=0x{i.RegisterList:X4}",
+        ThumbOp.SupervisorCall => $"#0x{i.Immediate:X}",
+        _ => ""
+    };
+
     private static uint GetHexOption(string[] args, string name, uint fallback)
     {
         var value = GetStringOption(args, name);
@@ -189,14 +262,17 @@ internal static class PocketCli
     private static void PrintHelp()
     {
         Console.WriteLine("""
-            PocketRecomp milestone 0.2 - experimental Nintendo 3DS static recompiler
+            nativ3ds milestone 0.3 - experimental Nintendo 3DS static recompiler
 
             Usage:
-              pocketrecomp inspect <decrypted-code.bin> [--base HEX] [--offset HEX] [--count N]
-              pocketrecomp recompile <decrypted-code.bin> [--base HEX] [--offset HEX] [--out FILE]
-              pocketrecomp analyze-project <project.json> [--strict]
-              pocketrecomp layout [--width 1920] [--height 1080] [--mode top-only|stacked|side-by-side]
-              pocketrecomp demo [--out DIRECTORY]
+              nativ3ds inspect <decrypted-code.bin> [--base HEX] [--offset HEX] [--count N]
+              nativ3ds inspect-thumb <code.bin> [--base HEX] [--offset HEX] [--count N]
+              nativ3ds inspect-container <game.3ds|content.cxi>
+              nativ3ds inspect-elf <homebrew.elf>
+              nativ3ds recompile <decrypted-code.bin> [--base HEX] [--offset HEX] [--out FILE]
+              nativ3ds analyze-project <project.json> [--strict]
+              nativ3ds layout [--width 1920] [--height 1080] [--mode top-only|stacked|side-by-side]
+              nativ3ds demo [--out DIRECTORY]
 
             This tool accepts only raw code you are legally authorized to use. It does not decrypt,
             extract, download, or distribute games, keys, firmware, system files, or Nintendo assets.

@@ -27,19 +27,20 @@ public static class ArmToIrTranslator
 
     private static IrInstruction Lower(ArmInstruction i) => i.Op switch
     {
-        ArmOp.MoveImmediate => New(IrOp.MoveConstant, i.Rd, value: i.Immediate),
-        ArmOp.AddImmediate => New(IrOp.AddConstant, i.Rd, i.Rn, i.Immediate),
-        ArmOp.SubtractImmediate => New(IrOp.SubtractConstant, i.Rd, i.Rn, i.Immediate),
-        ArmOp.CompareImmediate => New(IrOp.CompareConstant, source: i.Rn, value: i.Immediate),
-        ArmOp.LoadImmediate => New(IrOp.Load32, i.Rd, i.Rn, i.Immediate),
-        ArmOp.StoreImmediate => New(IrOp.Store32, source: i.Rd, value: ((ulong)(uint)i.Rn << 32) | i.Immediate),
-        ArmOp.Branch => New(IrOp.Jump, value: i.Target),
-        ArmOp.BranchLink => New(IrOp.Call, value: i.Target),
-        ArmOp.BranchExchange => New(IrOp.JumpRegister, source: i.Rm),
-        ArmOp.SoftwareInterrupt => New(IrOp.SupervisorCall, value: i.Immediate),
-        _ => New(IrOp.Unsupported, value: i.Word)
+        ArmOp.MoveImmediate => New(IrOp.MoveConstant, i, i.Rd, value: i.Immediate),
+        ArmOp.AddImmediate => New(IrOp.AddConstant, i, i.Rd, i.Rn, i.Immediate),
+        ArmOp.SubtractImmediate => New(IrOp.SubtractConstant, i, i.Rd, i.Rn, i.Immediate),
+        ArmOp.CompareImmediate => New(IrOp.CompareConstant, i, source: i.Rn, value: i.Immediate),
+        ArmOp.LoadImmediate => New(IrOp.Load32, i, i.Rd, i.Rn, i.Immediate),
+        ArmOp.StoreImmediate => New(IrOp.Store32, i, source: i.Rd, value: ((ulong)(uint)i.Rn << 32) | i.Immediate),
+        ArmOp.Branch => New(IrOp.Jump, i, value: i.Target),
+        ArmOp.BranchLink => New(IrOp.Call, i, value: i.Target),
+        ArmOp.BranchExchange => New(IrOp.JumpRegister, i, source: i.Rm),
+        ArmOp.SoftwareInterrupt => New(IrOp.SupervisorCall, i, value: i.Immediate),
+        _ => New(IrOp.Unsupported, i, value: i.Word)
     };
 
-    private static IrInstruction New(IrOp op, int destination = -1, int source = -1, ulong value = 0) =>
-        new(op, destination, source, value);
+    private static IrInstruction New(IrOp op, ArmInstruction sourceInstruction,
+        int destination = -1, int source = -1, ulong value = 0) =>
+        new(op, destination, source, value, sourceInstruction.Address, sourceInstruction.Word);
 }

@@ -1,10 +1,14 @@
-# PocketRecomp
+# nativ3ds
 
-PocketRecomp is an early clean-room Nintendo 3DS-to-PC static recompilation toolkit. The goal is to
+nativ3ds is an early clean-room Nintendo 3DS-to-PC static recompilation toolkit. The goal is to
 translate a title's ARM11 code ahead of time into native PC code, then provide portable replacements
 for the 3DS operating-system, graphics, audio, input, and timing interfaces.
 
-This repository is **milestone 0.2**, not a game runner yet. It proves the core pipeline:
+The committed product interface is a local `.3ds`/NCCH-to-Windows build pipeline. Container recognition
+exists now; ExeFS loading and native linking are still under construction. See
+[`docs/BUILD_PIPELINE.md`](docs/BUILD_PIPELINE.md) for the exact input/output contract.
+
+This repository is **milestone 0.3**, not a game runner yet. It proves the core pipeline:
 
 ```text
 authorized decrypted ARM code -> ARM decoder -> portable IR -> generated C++ -> PC runtime ABI
@@ -16,7 +20,10 @@ authorized decrypted ARM code -> ARM decoder -> portable IR -> generated C++ -> 
 
 - Decoding for an initial ARM-state subset: `MOV`, `ADD`, `SUB`, `CMP`, immediate word `LDR`/`STR`,
   `B`, `BL`, `BX`, and `SVC`.
+- Strict decoding for an initial Thumb-1 subset, including shifts, arithmetic, literal/word loads,
+  stores, stack lists, conditional branches, `BL`, `BX`, and `SVC`.
 - Translation into a small, testable intermediate representation.
+- A reference IR interpreter with ARM condition flags, bounded guest memory, calls, branches, and SVC exits.
 - Reachable basic-block and direct-call discovery from declared entry points.
 - A portable JSON project manifest with segment bounds and optional SHA-256 verification.
 - Generated C++ blocks targeting a stable runtime interface.
@@ -25,6 +32,7 @@ authorized decrypted ARM code -> ARM decoder -> portable IR -> generated C++ -> 
 - Automatic 1080p top-screen scaling: 400×240 becomes 1800×1080 with 60-pixel side bars.
 - Separate guest simulation and presentation rates, ready for interpolation and title patches.
 - A dependency-free CLI and test runner; all milestone tests pass.
+- GitHub Actions continuous integration on Windows.
 
 ## Important reality checks
 
@@ -43,17 +51,20 @@ Requirements: Windows and the .NET 9 SDK.
 
 ```powershell
 ./build.ps1
-dotnet ./src/PocketRecomp.Cli/bin/Release/net9.0/PocketRecomp.Cli.dll demo
-dotnet ./src/PocketRecomp.Cli/bin/Release/net9.0/PocketRecomp.Cli.dll analyze-project ./demo-output/project.json --strict
-dotnet ./src/PocketRecomp.Cli/bin/Release/net9.0/PocketRecomp.Cli.dll layout --mode stacked
+./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe demo
+./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe analyze-project ./demo-output/project.json --strict
+./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe layout --mode stacked
 ```
 
 To inspect code that you are authorized to use:
 
 ```powershell
-dotnet ./src/PocketRecomp.Cli/bin/Release/net9.0/PocketRecomp.Cli.dll inspect ./code.bin --base 00100000
-dotnet ./src/PocketRecomp.Cli/bin/Release/net9.0/PocketRecomp.Cli.dll recompile ./code.bin --base 00100000 --out block.cpp
-dotnet ./src/PocketRecomp.Cli/bin/Release/net9.0/PocketRecomp.Cli.dll analyze-project ./project.json
+./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe inspect ./code.bin --base 00100000
+./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe inspect-thumb ./thumb-code.bin --base 00100000
+./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe inspect-container ./game.3ds
+./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe inspect-elf ./homebrew.elf
+./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe recompile ./code.bin --base 00100000 --out block.cpp
+./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe analyze-project ./project.json
 ```
 
 Inputs are raw little-endian ARM code. `--base` and `--offset` are hexadecimal. Copy
@@ -69,9 +80,9 @@ a patch/tool that requires each user to provide their own lawful input, never as
 
 ## Next engineering milestones
 
-1. Complete ARMv6K ARM-state decoding, then add Thumb/Thumb-2 decoding and VFPv2.
-2. Parse a neutral manifest describing already-decrypted code/data segments, relocations, and entry points.
-3. Build control-flow discovery, function boundaries, indirect-call tables, and verification against an interpreter.
+1. Complete ARMv6K ARM-state and Thumb-1 lowering, then add VFPv2.
+2. Extend the ELF loader from program segments/entry points to symbols and relocations.
+3. Expand control-flow discovery with indirect-call tables and differential checks against the interpreter.
 4. Implement guest virtual memory, thread scheduling, TLS, atomics, exceptions, and SVC/service shims.
 5. Translate PICA200 commands to Vulkan/D3D12, including render-target scaling to 1080p and shader generation.
 6. Add DSP audio, controller/touch/motion mapping, files/save-data redirection, and deterministic timing.

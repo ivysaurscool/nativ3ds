@@ -1,4 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>nativ3ds</AssemblyName>
+  </PropertyGroup>
   <ItemGroup><ProjectReference Include="..\PocketRecomp.Core\PocketRecomp.Core.csproj" /></ItemGroup>
 </Project>
