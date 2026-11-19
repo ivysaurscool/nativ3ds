@@ -4,7 +4,7 @@ The product contract is intentionally direct:
 
 ```powershell
 nativ3ds inspect-container game.3ds
-nativ3ds build game.3ds --title-manifest titles/<title-id>.json --output build/<title-id>
+nativ3ds build game.3ds --output build/<title-id>
 ```
 
 The final build output will contain a Windows executable, the PocketRuntime libraries, a user-local
@@ -14,8 +14,8 @@ firmware, SDK files, or content copied from somebody else's game.
 ## Required local inputs
 
 - A game/container the user is legally authorized to use.
-- A title manifest supplied by the open-source project. It identifies code entry points, jump tables,
-  service mappings, patches, and timing fixes by hashes/patterns rather than redistributing game data.
+- A matching title manifest supplied with the open-source project when a title needs exact revision
+  identification. It contains hashes and metadata rather than game data.
 - If the user's input is encrypted, authorized already-decrypted executable content prepared outside
   nativ3ds. Do not submit keys, firmware, account data, or copyrighted game files to this repository.
 
@@ -33,10 +33,13 @@ firmware, SDK files, or content copied from somebody else's game.
 
 ## Current implementation status
 
-- Stage 1: NCSD/NCCH recognition and size validation is implemented without extraction/decryption.
-- Stages 3–5: initial ARM control flow, ARM IR, Thumb decoding, and a bounded reference interpreter exist.
+- Stages 1–2: readable NCSD/NCCH, ExHeader, ExeFS, and compressed `.code` loading are implemented without
+  accepting keys or decrypting content. No game bytes are written to the build directory.
+- Stages 3–5: reachable ARM control flow, a growing ARMv6K lowering set, Thumb decoding, generated C++,
+  and a bounded reference interpreter exist.
 - Project-manifest builds can analyze authorized raw ARM segments today.
 - Bounds-checked ELF32 ARM loading now maps program segments, BSS, permissions, and ARM/Thumb entry mode.
-- ExeFS loading, ELF relocations, complete instruction lowering, native linking, and the PC runtime are next.
+- Complete instruction lowering, indirect control-flow recovery, native dispatch/linking, guest services,
+  and the PC graphics/audio/input runtime are next.
 
 The `.3ds` path is a native-recompilation pipeline, not a fallback that launches an emulator.

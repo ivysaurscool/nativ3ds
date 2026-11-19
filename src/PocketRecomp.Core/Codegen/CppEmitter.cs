@@ -37,18 +37,74 @@ public static class CppEmitter
         var line = i.Op switch
         {
             IrOp.GuardCondition => $"/* dangling condition {i.Value} */",
-            IrOp.MoveConstant => $"cpu.r[{i.Destination}] = 0x{i.Value:X}u;",
-            IrOp.AddConstant => $"cpu.r[{i.Destination}] = cpu.r[{i.Source}] + 0x{i.Value:X}u;",
-            IrOp.SubtractConstant => $"cpu.r[{i.Destination}] = cpu.r[{i.Source}] - 0x{i.Value:X}u;",
+            IrOp.MoveConstant => $"cpu.r[{i.Destination}] = 0x{i.Value:X}u;{ImmediateLogicalFlags(i)}",
+            IrOp.MoveRegister => $"cpu.r[{i.Destination}] = {ShiftedOperand(i, i.SetFlags)};{RegisterLogicalFlags(i)}",
+            IrOp.MoveNotConstant => $"cpu.r[{i.Destination}] = ~0x{i.Value:X}u;{ImmediateLogicalFlags(i)}",
+            IrOp.MoveNotRegister => $"cpu.r[{i.Destination}] = ~{ShiftedOperand(i, i.SetFlags)};{RegisterLogicalFlags(i)}",
+            IrOp.AndConstant => $"cpu.r[{i.Destination}] = cpu.r[{i.Source}] & 0x{i.Value:X}u;{ImmediateLogicalFlags(i)}",
+            IrOp.AndRegister => $"cpu.r[{i.Destination}] = cpu.r[{i.Source}] & {ShiftedOperand(i, i.SetFlags)};{RegisterLogicalFlags(i)}",
+            IrOp.OrConstant => $"cpu.r[{i.Destination}] = cpu.r[{i.Source}] | 0x{i.Value:X}u;{ImmediateLogicalFlags(i)}",
+            IrOp.OrRegister => $"cpu.r[{i.Destination}] = cpu.r[{i.Source}] | {ShiftedOperand(i, i.SetFlags)};{RegisterLogicalFlags(i)}",
+            IrOp.BitClearConstant => $"cpu.r[{i.Destination}] = cpu.r[{i.Source}] & ~0x{i.Value:X}u;{ImmediateLogicalFlags(i)}",
+            IrOp.BitClearRegister => $"cpu.r[{i.Destination}] = cpu.r[{i.Source}] & ~{ShiftedOperand(i, i.SetFlags)};{RegisterLogicalFlags(i)}",
+            IrOp.AddConstant => $"cpu.r[{i.Destination}] = cpu.add(cpu.r[{i.Source}], 0x{i.Value:X}u, {Bool(i.SetFlags)});",
+            IrOp.AddRegister => $"cpu.r[{i.Destination}] = cpu.add(cpu.r[{i.Source}], {ShiftedOperand(i, false)}, {Bool(i.SetFlags)});",
+            IrOp.SubtractConstant => $"cpu.r[{i.Destination}] = cpu.subtract(cpu.r[{i.Source}], 0x{i.Value:X}u, {Bool(i.SetFlags)});",
+            IrOp.SubtractRegister => $"cpu.r[{i.Destination}] = cpu.subtract(cpu.r[{i.Source}], {ShiftedOperand(i, false)}, {Bool(i.SetFlags)});",
             IrOp.CompareConstant => $"cpu.compare(cpu.r[{i.Source}], 0x{i.Value:X}u);",
+            IrOp.CompareRegister => $"cpu.compare(cpu.r[{i.Source}], {ShiftedOperand(i, false)});",
+            IrOp.TestConstant => $"cpu.logical_flags(cpu.r[{i.Source}] & 0x{i.Value:X}u{ImmediateCarryArgument(i)});",
+            IrOp.TestRegister => $"cpu.logical_flags(cpu.r[{i.Source}] & {ShiftedOperand(i, true)});",
             IrOp.Load32 => $"cpu.r[{i.Destination}] = cpu.load32(cpu.r[{i.Source}] + 0x{i.Value:X}u);",
             IrOp.Store32 => $"cpu.store32(cpu.r[{(uint)(i.Value >> 32)}] + 0x{(uint)i.Value:X}u, cpu.r[{i.Source}]);",
+            IrOp.Load32PreWriteback => $"{{ const auto address = cpu.r[{i.Source}] + 0x{i.Value:X}u; cpu.r[{i.Destination}] = cpu.load32(address); cpu.r[{i.Source}] = address; }}",
+            IrOp.Store32PreWriteback => $"{{ const auto address = cpu.r[{(uint)(i.Value >> 32)}] + 0x{(uint)i.Value:X}u; cpu.store32(address, cpu.r[{i.Source}]); cpu.r[{(uint)(i.Value >> 32)}] = address; }}",
+            IrOp.Load32PostWriteback => $"{{ const auto address = cpu.r[{i.Source}]; cpu.r[{i.Destination}] = cpu.load32(address); cpu.r[{i.Source}] = address + 0x{i.Value:X}u; }}",
+            IrOp.Store32PostWriteback => $"{{ const auto address = cpu.r[{(uint)(i.Value >> 32)}]; cpu.store32(address, cpu.r[{i.Source}]); cpu.r[{(uint)(i.Value >> 32)}] = address + 0x{(uint)i.Value:X}u; }}",
+            IrOp.Load8 => $"cpu.r[{i.Destination}] = cpu.load8(cpu.r[{i.Source}] + 0x{i.Value:X}u);",
+            IrOp.Store8 => $"cpu.store8(cpu.r[{(uint)(i.Value >> 32)}] + 0x{(uint)i.Value:X}u, static_cast<std::uint8_t>(cpu.r[{i.Source}]));",
+            IrOp.Load16 => $"cpu.r[{i.Destination}] = cpu.load16(cpu.r[{i.Source}] + 0x{i.Value:X}u);",
+            IrOp.Store16 => $"cpu.store16(cpu.r[{(uint)(i.Value >> 32)}] + 0x{(uint)i.Value:X}u, static_cast<std::uint16_t>(cpu.r[{i.Source}]));",
+            IrOp.LoadSigned8 => $"cpu.r[{i.Destination}] = cpu.load_signed8(cpu.r[{i.Source}] + 0x{i.Value:X}u);",
+            IrOp.LoadSigned16 => $"cpu.r[{i.Destination}] = cpu.load_signed16(cpu.r[{i.Source}] + 0x{i.Value:X}u);",
+            IrOp.Load8PreWriteback => $"{{ const auto address = cpu.r[{i.Source}] + 0x{i.Value:X}u; cpu.r[{i.Destination}] = cpu.load8(address); cpu.r[{i.Source}] = address; }}",
+            IrOp.Store8PreWriteback => $"{{ const auto address = cpu.r[{(uint)(i.Value >> 32)}] + 0x{(uint)i.Value:X}u; cpu.store8(address, static_cast<std::uint8_t>(cpu.r[{i.Source}])); cpu.r[{(uint)(i.Value >> 32)}] = address; }}",
+            IrOp.Load8PostWriteback => $"{{ const auto address = cpu.r[{i.Source}]; cpu.r[{i.Destination}] = cpu.load8(address); cpu.r[{i.Source}] = address + 0x{i.Value:X}u; }}",
+            IrOp.Store8PostWriteback => $"{{ const auto address = cpu.r[{(uint)(i.Value >> 32)}]; cpu.store8(address, static_cast<std::uint8_t>(cpu.r[{i.Source}])); cpu.r[{(uint)(i.Value >> 32)}] = address + 0x{(uint)i.Value:X}u; }}",
+            IrOp.LoadMultiple => $"if (cpu.load_multiple({(i.Value >> 16) & 0xF}u, 0x{(ushort)i.Value:X4}u, {Bool((i.Value & (1UL << 20)) != 0)}, {Bool((i.Value & (1UL << 21)) != 0)}, {Bool((i.Value & (1UL << 22)) != 0)})) return;",
+            IrOp.StoreMultiple => $"cpu.store_multiple({(i.Value >> 16) & 0xF}u, 0x{(ushort)i.Value:X4}u, {Bool((i.Value & (1UL << 20)) != 0)}, {Bool((i.Value & (1UL << 21)) != 0)}, {Bool((i.Value & (1UL << 22)) != 0)});",
+            IrOp.Push => $"cpu.push(0x{i.Value:X4}u);",
+            IrOp.Pop => $"if (cpu.pop(0x{i.Value:X4}u)) return;",
             IrOp.Jump => $"cpu.jump(0x{i.Value:X8}u); return;",
             IrOp.Call => $"cpu.call(0x{i.Value:X8}u);",
+            IrOp.CallRegister => $"cpu.call(cpu.r[{i.Source}]); return;",
             IrOp.JumpRegister => $"cpu.jump(cpu.r[{i.Source}]); return;",
             IrOp.SupervisorCall => $"cpu.svc(0x{i.Value:X}u); return;",
+            IrOp.ReadThreadPointer => $"cpu.r[{i.Destination}] = cpu.thread_pointer();",
+            IrOp.Nop => ";",
             _ => $"cpu.unsupported(0x{i.Value:X8}u);"
         };
         sb.Append(indent).AppendLine(line);
     }
+
+    private static string ShiftedOperand(IrInstruction i, bool updateCarry) =>
+        $"cpu.shift_immediate(cpu.r[{i.Value}], {(uint)i.ShiftType}u, {i.ShiftAmount}u, {Bool(updateCarry)})";
+
+    private static string ImmediateLogicalFlags(IrInstruction i)
+    {
+        if (!i.SetFlags) return "";
+        return i.UpdateCarry
+            ? $" cpu.logical_flags(cpu.r[{i.Destination}], {Bool(i.CarryValue)});"
+            : $" cpu.logical_flags(cpu.r[{i.Destination}]);";
+    }
+
+    private static string RegisterLogicalFlags(IrInstruction i) => i.SetFlags
+        ? $" cpu.logical_flags(cpu.r[{i.Destination}]);"
+        : "";
+
+    private static string ImmediateCarryArgument(IrInstruction i) => i.UpdateCarry
+        ? $", {Bool(i.CarryValue)}"
+        : "";
+
+    private static string Bool(bool value) => value ? "true" : "false";
 }

@@ -76,7 +76,11 @@ public static class ControlFlowDiscoverer
                 if (Contains(code, baseAddress, instruction.Target)) leaders.Add(instruction.Target);
                 if (Contains(code, baseAddress, next)) leaders.Add(next);
             }
-            else if (instruction.Op is ArmOp.BranchExchange or ArmOp.SoftwareInterrupt)
+            else if (instruction.Op is ArmOp.BranchExchange or ArmOp.BranchLinkExchange or ArmOp.SoftwareInterrupt)
+            {
+                if (Contains(code, baseAddress, next)) leaders.Add(next);
+            }
+            else if ((instruction.Op is ArmOp.Pop or ArmOp.LoadMultiple) && (instruction.RegisterList & 0x8000) != 0)
             {
                 if (Contains(code, baseAddress, next)) leaders.Add(next);
             }
@@ -122,6 +126,14 @@ public static class ControlFlowDiscoverer
                     address = next;
                     goto Finished;
                 case ArmOp.BranchExchange:
+                    address = next;
+                    goto Finished;
+                case ArmOp.Pop when (instruction.RegisterList & 0x8000) != 0:
+                case ArmOp.LoadMultiple when (instruction.RegisterList & 0x8000) != 0:
+                    address = next;
+                    goto Finished;
+                case ArmOp.BranchLinkExchange:
+                    AddUnique(successors, next);
                     address = next;
                     goto Finished;
                 case ArmOp.SoftwareInterrupt:

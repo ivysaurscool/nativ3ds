@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "key": "mk7-usa-rev1",
+  "displayName": "Mario Kart 7 (USA, Rev 1)",
+  "titleId": "0004000000030800",
+  "productCode": "CTR-P-AMKE",
+  "contentVersion": 2,
+  "romSha256": "6b378a54eb154c174d91c38a0337c931410bc1eee7ce5e857ee1ac6b68cbc65c",
+  "storedCodeSha256": "efa17e554be6acd51b207a4f6aad70c18580c589e592723cdacb478d6da31a8e",
+  "mappedCodeSha256": "5524740f9552f518085eec0cdc163d8666d6bfe5a4f3ca3674f195103eaeede7",
+  "networkPolicy": "offline-stub"
+}

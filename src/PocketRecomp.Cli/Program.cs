@@ -11,6 +11,7 @@ using PocketRecomp.Core.Projects;
 using PocketRecomp.Core.Thumb;
 using PocketRecomp.Core.Containers;
 using PocketRecomp.Core.Executables;
+using PocketRecomp.Core.Build;
 
 return await PocketCli.RunAsync(args);
 
@@ -31,6 +32,9 @@ internal static class PocketCli
                 "inspect" => await InspectAsync(args[1..]),
                 "inspect-thumb" => await InspectThumbAsync(args[1..]),
                 "inspect-container" => await InspectContainerAsync(args[1..]),
+                "inspect-executable" => await InspectExecutableAsync(args[1..]),
+                "analyze-cartridge" => await AnalyzeCartridgeAsync(args[1..]),
+                "build" => await BuildAsync(args[1..]),
                 "inspect-elf" => await InspectElfAsync(args[1..]),
                 "recompile" => await RecompileAsync(args[1..]),
                 "analyze-project" => await AnalyzeProjectAsync(args[1..]),
@@ -110,6 +114,73 @@ internal static class PocketCli
             Console.WriteLine($"Declared size: {declared} bytes ({(info.SizeMatches ? "present" : "truncated")})");
         Console.WriteLine("Decryption:    not attempted; PocketRecomp never accepts or stores console/game keys");
         return info.Kind == ThreeDsContainerKind.Unknown || !info.SizeMatches ? 3 : 0;
+    }
+
+    private static async Task<int> InspectExecutableAsync(string[] args)
+    {
+        if (args.Length < 1) throw new ArgumentException("inspect-executable requires a local, authorized .3ds file.");
+        var executable = await CartridgeReader.LoadExecutableAsync(args[0]);
+        var header = executable.Partition.Header;
+        var code = executable.CodeSet;
+        Console.WriteLine($"Title:          {code.Name}");
+        Console.WriteLine($"Product code:   {header.ProductCode}");
+        Console.WriteLine($"Program ID:     0x{header.ProgramId:X16}");
+        Console.WriteLine($"Content version:{header.ContentVersion,8}");
+        Console.WriteLine($"Partition:      {executable.Partition.Index} at 0x{executable.Partition.Offset:X}");
+        Console.WriteLine($"Stored .code:   0x{executable.ExeFsEntries.Single(entry => entry.Name == ".code").Size:X} bytes");
+        Console.WriteLine($"Mapped .code:   0x{executable.Code.Length:X} bytes ({(code.Compressed ? "decompressed" : "uncompressed")})");
+        Console.WriteLine($"Stored SHA-256: {executable.StoredCodeSha256}");
+        Console.WriteLine($"Mapped SHA-256: {executable.MappedCodeSha256}");
+        Console.WriteLine($"Text:           0x{code.TextAddress:X8}, size=0x{code.TextSize:X}, pages=0x{code.TextPages:X}");
+        Console.WriteLine($"RO:             0x{code.RoAddress:X8}, size=0x{code.RoSize:X}, pages=0x{code.RoPages:X}");
+        Console.WriteLine($"Data:           0x{code.DataAddress:X8}, size=0x{code.DataSize:X}, pages=0x{code.DataPages:X}");
+        Console.WriteLine($"BSS/stack:      0x{code.BssSize:X} / 0x{code.StackSize:X}");
+        Console.WriteLine($"ExeFS:          {string.Join(", ", executable.ExeFsEntries.Select(entry => $"{entry.Name}=0x{entry.Size:X}"))}");
+        return 0;
+    }
+
+    private static async Task<int> AnalyzeCartridgeAsync(string[] args)
+    {
+        if (args.Length < 1) throw new ArgumentException("analyze-cartridge requires a local, authorized .3ds file.");
+        var executable = await CartridgeReader.LoadExecutableAsync(args[0]);
+        var codeSet = executable.CodeSet;
+        var textBytes = checked((int)(codeSet.TextPages * 0x1000u));
+        var graph = ControlFlowDiscoverer.Discover(executable.Code.AsSpan(0, textBytes),
+            codeSet.TextAddress, [codeSet.TextAddress]);
+        var unknown = graph.Blocks.Values
+            .Where(block => block.EndsWithUnsupported)
+            .Select(block => block.Instructions[^1])
+            .OrderBy(instruction => instruction.Address)
+            .ToArray();
+        Console.WriteLine($"Title:          {codeSet.Name} ({executable.Partition.Header.ProductCode})");
+        Console.WriteLine($"Entry point:    0x{codeSet.TextAddress:X8} (ARM state)");
+        Console.WriteLine($"Reachable:      {graph.Blocks.Count} blocks, {graph.InstructionCount} instructions");
+        Console.WriteLine($"Unsupported:    {unknown.Length} reachable block endings");
+        Console.WriteLine($"External calls: {graph.UnresolvedTargets.Count}");
+        foreach (var instruction in unknown.Take(32))
+            Console.WriteLine($"  unsupported 0x{instruction.Word:X8} at 0x{instruction.Address:X8}");
+        foreach (var target in graph.UnresolvedTargets.Take(32))
+            Console.WriteLine($"  external target 0x{target:X8}");
+        return unknown.Length == 0 ? 0 : 3;
+    }
+
+    private static async Task<int> BuildAsync(string[] args)
+    {
+        if (args.Length < 1) throw new ArgumentException("build requires a local, authorized .3ds file.");
+        var output = GetStringOption(args, "--output") ?? "build-output";
+        var manifestDirectory = Path.Combine(AppContext.BaseDirectory, "titles");
+        var manifests = await NativeBuildPipeline.LoadManifestsAsync(manifestDirectory);
+        Console.WriteLine("Hashing and loading cartridge...");
+        var result = await NativeBuildPipeline.PrepareAsync(args[0], output, manifests);
+        Console.WriteLine($"Title:       {result.Report.DisplayName}");
+        Console.WriteLine($"Status:      {result.Report.Status}");
+        Console.WriteLine($"Reachable:   {result.Report.ReachableBlocks} blocks, {result.Report.ReachableInstructions} instructions");
+        Console.WriteLine($"Unsupported: {result.Report.UnsupportedEncodings.Count} unique encodings");
+        Console.WriteLine($"Report:      {result.ReportPath}");
+        Console.WriteLine($"Next:        {result.Report.NextRequiredStage}");
+        if (!result.Report.NativeExecutableProduced)
+            Console.WriteLine("No executable was produced yet; the report records the remaining native-build blockers.");
+        return result.Report.NativeExecutableProduced ? 0 : 4;
     }
 
     private static async Task<int> InspectElfAsync(string[] args)
@@ -208,14 +279,41 @@ internal static class PocketCli
     private static string FormatOperands(ArmInstruction i) => i.Op switch
     {
         ArmOp.MoveImmediate => $"r{i.Rd}, #0x{i.Immediate:X}",
-        ArmOp.AddImmediate or ArmOp.SubtractImmediate => $"r{i.Rd}, r{i.Rn}, #0x{i.Immediate:X}",
+        ArmOp.MoveRegister => FormatShiftedRegister(i, $"r{i.Rd}, r{i.Rm}"),
+        ArmOp.MoveNotImmediate => $"r{i.Rd}, #0x{i.Immediate:X}",
+        ArmOp.MoveNotRegister => FormatShiftedRegister(i, $"r{i.Rd}, r{i.Rm}"),
+        ArmOp.AndImmediate or ArmOp.OrImmediate or ArmOp.BitClearImmediate or
+            ArmOp.AddImmediate or ArmOp.SubtractImmediate => $"r{i.Rd}, r{i.Rn}, #0x{i.Immediate:X}",
+        ArmOp.AndRegister or ArmOp.OrRegister or ArmOp.BitClearRegister or
+            ArmOp.AddRegister or ArmOp.SubtractRegister => FormatShiftedRegister(i, $"r{i.Rd}, r{i.Rn}, r{i.Rm}"),
         ArmOp.CompareImmediate => $"r{i.Rn}, #0x{i.Immediate:X}",
-        ArmOp.LoadImmediate or ArmOp.StoreImmediate => $"r{i.Rd}, [r{i.Rn}, #0x{i.Immediate:X}]",
+        ArmOp.CompareRegister => FormatShiftedRegister(i, $"r{i.Rn}, r{i.Rm}"),
+        ArmOp.TestImmediate => $"r{i.Rn}, #0x{i.Immediate:X}",
+        ArmOp.TestRegister => FormatShiftedRegister(i, $"r{i.Rn}, r{i.Rm}"),
+        ArmOp.LoadImmediate or ArmOp.StoreImmediate or ArmOp.LoadByteImmediate or ArmOp.StoreByteImmediate
+            => $"r{i.Rd}, [r{i.Rn}, #0x{i.Immediate:X}]",
+        ArmOp.LoadHalfwordImmediate or ArmOp.StoreHalfwordImmediate or
+            ArmOp.LoadSignedByteImmediate or ArmOp.LoadSignedHalfwordImmediate
+            => $"r{i.Rd}, [r{i.Rn}, #0x{i.Immediate:X}]",
+        ArmOp.LoadMultiple or ArmOp.StoreMultiple => $"r{i.Rn}{(i.WriteBack ? "!" : "")}, register-list=0x{i.RegisterList:X4}",
+        ArmOp.Push or ArmOp.Pop => $"register-list=0x{i.RegisterList:X4}",
         ArmOp.Branch or ArmOp.BranchLink => $"0x{i.Target:X8}",
-        ArmOp.BranchExchange => $"r{i.Rm}",
+        ArmOp.BranchExchange or ArmOp.BranchLinkExchange => $"r{i.Rm}",
         ArmOp.SoftwareInterrupt => $"#0x{i.Immediate:X}",
+        ArmOp.ReadThreadPointer => $"r{i.Rd}",
         _ => ""
     };
+
+    private static string FormatShiftedRegister(ArmInstruction instruction, string operands)
+    {
+        if (instruction.ShiftType == ArmShiftType.Lsl && instruction.ShiftAmount == 0) return operands;
+        var amount = instruction.ShiftAmount == 0 && instruction.ShiftType is ArmShiftType.Lsr or ArmShiftType.Asr
+            ? 32 : instruction.ShiftAmount;
+        var suffix = instruction.ShiftType == ArmShiftType.Ror && instruction.ShiftAmount == 0
+            ? "RRX"
+            : $"{instruction.ShiftType.ToString().ToUpperInvariant()} #{amount}";
+        return $"{operands}, {suffix}";
+    }
 
     private static string FormatThumbOperands(ThumbInstruction i) => i.Op switch
     {
@@ -268,6 +366,9 @@ internal static class PocketCli
               nativ3ds inspect <decrypted-code.bin> [--base HEX] [--offset HEX] [--count N]
               nativ3ds inspect-thumb <code.bin> [--base HEX] [--offset HEX] [--count N]
               nativ3ds inspect-container <game.3ds|content.cxi>
+              nativ3ds inspect-executable <game.3ds>
+              nativ3ds analyze-cartridge <game.3ds>
+              nativ3ds build <game.3ds> [--output DIRECTORY]
               nativ3ds inspect-elf <homebrew.elf>
               nativ3ds recompile <decrypted-code.bin> [--base HEX] [--offset HEX] [--out FILE]
               nativ3ds analyze-project <project.json> [--strict]

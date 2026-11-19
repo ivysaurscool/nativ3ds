@@ -1,5 +1,6 @@
 bin/
 obj/
 demo-output/
+build-output/
 .cache/
 *.recompiled.cpp

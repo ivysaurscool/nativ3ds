@@ -4,26 +4,27 @@ nativ3ds is an early clean-room Nintendo 3DS-to-PC static recompilation toolkit.
 translate a title's ARM11 code ahead of time into native PC code, then provide portable replacements
 for the 3DS operating-system, graphics, audio, input, and timing interfaces.
 
-The committed product interface is a local `.3ds`/NCCH-to-Windows build pipeline. Container recognition
-exists now; ExeFS loading and native linking are still under construction. See
+The committed product interface is a local `.3ds`/NCCH-to-Windows build pipeline. Unencrypted NCSD,
+NCCH, ExHeader, ExeFS, and compressed `.code` loading work now; native linking is still under construction. See
 [`docs/BUILD_PIPELINE.md`](docs/BUILD_PIPELINE.md) for the exact input/output contract.
 
 This repository is **milestone 0.3**, not a game runner yet. It proves the core pipeline:
 
 ```text
-authorized decrypted ARM code -> ARM decoder -> portable IR -> generated C++ -> PC runtime ABI
+authorized local .3ds -> NCCH/ExeFS loader -> ARM decoder -> portable IR -> generated C++ -> PC runtime ABI
                                                     |
                                      1080p layout + frame timing
 ```
 
 ## What works now
 
-- Decoding for an initial ARM-state subset: `MOV`, `ADD`, `SUB`, `CMP`, immediate word `LDR`/`STR`,
-  `B`, `BL`, `BX`, and `SVC`.
+- Strict ARM-state decoding/lowering for branches and calls, conditional execution, the barrel shifter,
+  logical/arithmetic flags, byte/halfword/word transfers, indexed writeback, register-list transfers,
+  stack operations, TLS reads, `SVC`, and a growing ARMv6K subset.
 - Strict decoding for an initial Thumb-1 subset, including shifts, arithmetic, literal/word loads,
   stores, stack lists, conditional branches, `BL`, `BX`, and `SVC`.
 - Translation into a small, testable intermediate representation.
-- A reference IR interpreter with ARM condition flags, bounded guest memory, calls, branches, and SVC exits.
+- A reference IR interpreter with ARM condition flags, bounded guest memory, calls, branches, TLS, and SVC exits.
 - Reachable basic-block and direct-call discovery from declared entry points.
 - A portable JSON project manifest with segment bounds and optional SHA-256 verification.
 - Generated C++ blocks targeting a stable runtime interface.
@@ -31,6 +32,8 @@ authorized decrypted ARM code -> ARM decoder -> portable IR -> generated C++ -> 
 - 3DS top-only, stacked, and side-by-side screen layouts at arbitrary output sizes.
 - Automatic 1080p top-screen scaling: 400×240 becomes 1800×1080 with 60-pixel side bars.
 - Separate guest simulation and presentation rates, ready for interpolation and title patches.
+- NCSD/NCCH executable inspection, backwards-LZ `.code` decompression, exact title hashing, and metadata-only
+  native build reports that never claim an executable before one is linked.
 - A dependency-free CLI and test runner; all milestone tests pass.
 - GitHub Actions continuous integration on Windows.
 
@@ -62,14 +65,18 @@ To inspect code that you are authorized to use:
 ./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe inspect ./code.bin --base 00100000
 ./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe inspect-thumb ./thumb-code.bin --base 00100000
 ./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe inspect-container ./game.3ds
+./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe inspect-executable ./game.3ds
+./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe analyze-cartridge ./game.3ds
+./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe build ./game.3ds --output ./build-output
 ./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe inspect-elf ./homebrew.elf
 ./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe recompile ./code.bin --base 00100000 --out block.cpp
 ./src/PocketRecomp.Cli/bin/Release/net9.0/nativ3ds.exe analyze-project ./project.json
 ```
 
-Inputs are raw little-endian ARM code. `--base` and `--offset` are hexadecimal. Copy
-`config/project.example.json` beside an authorized `code.bin` to use reachable-code analysis.
-The prototype deliberately does not parse or decrypt encrypted game containers.
+Raw-code commands accept little-endian ARM code; `--base` and `--offset` are hexadecimal. Cartridge
+commands accept readable NCSD/NCCH content. The prototype deliberately does not accept keys or decrypt
+encrypted game containers. `build` currently writes a diagnostic `build-report.json`; it does not yet
+produce an executable or copy game content into the output directory.
 
 ## Legal and project boundary
 

@@ -4,4 +4,7 @@
     <AssemblyName>nativ3ds</AssemblyName>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="..\PocketRecomp.Core\PocketRecomp.Core.csproj" /></ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\titles\**\*.json" Link="titles\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

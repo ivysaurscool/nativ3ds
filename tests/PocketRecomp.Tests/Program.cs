@@ -9,14 +9,22 @@ using PocketRecomp.Core.Projects;
 using PocketRecomp.Core.Thumb;
 using PocketRecomp.Core.Containers;
 using PocketRecomp.Core.Executables;
+using PocketRecomp.Core.Compression;
+using PocketRecomp.Core.Build;
 
 var tests = new (string Name, Action Run)[]
 {
     ("decodes MOV immediate", DecodeMove),
     ("decodes forward branch", DecodeBranch),
     ("decodes BX LR", DecodeBx),
-    ("rejects unsupported flag-setting arithmetic", RejectFlagSetting),
-    ("rejects byte load as word load", RejectByteLoad),
+    ("decodes ARM register compare", DecodeRegisterCompare),
+    ("decodes ARM stack aliases", DecodeArmStack),
+    ("decodes ARM multiple transfer", DecodeMultipleTransfer),
+    ("decodes ARM logical immediates and NOP", DecodeLogicalImmediate),
+    ("decodes ARM BLX register", DecodeBlxRegister),
+    ("decodes flag-setting arithmetic", DecodeFlagSettingArithmetic),
+    ("decodes byte memory operations", DecodeByteMemory),
+    ("decodes signed memory and TLS operations", DecodeSignedMemoryAndTls),
     ("translates and terminates block", TranslateBlock),
     ("emits C++", EmitCpp),
     ("wraps conditional instruction", ConditionalCpp),
@@ -29,9 +37,19 @@ var tests = new (string Name, Action Run)[]
     ("executes translated arithmetic", ExecuteArithmetic),
     ("honors ARM condition guards", ExecuteConditional),
     ("executes guest memory operations", ExecuteMemory),
+    ("executes indexed memory writeback", ExecuteMemoryWriteback),
+    ("executes byte and logical operations", ExecuteByteAndLogical),
+    ("executes signed memory and TLS operations", ExecuteSignedMemoryAndTls),
+    ("executes ARM shifted logical flags", ExecuteShiftedLogicalFlags),
+    ("executes ARM arithmetic flags and tests", ExecuteArithmeticFlags),
     ("models ARM branch with link", ExecuteCall),
+    ("executes ARM push and pop", ExecutePushPop),
+    ("executes ARM multiple transfer", ExecuteMultipleTransfer),
     ("recognizes 3DS cartridge container", InspectThreeDsContainer),
     ("loads ARM ELF32 executable", LoadArmElf),
+    ("decompresses backward LZ code", DecompressBackwardLz),
+    ("loads executable from cartridge", LoadCartridgeExecutable),
+    ("prepares native build report", PrepareNativeBuild),
     ("fits top screen at 1080p", TopLayout),
     ("fits stacked screens", StackedLayout),
     ("validates high-FPS timing", Timing)
@@ -64,16 +82,80 @@ static void DecodeBx()
     Equal(ArmOp.BranchExchange, i.Op); Equal(14, i.Rm);
 }
 
-static void RejectFlagSetting()
+static void DecodeRegisterCompare()
 {
-    // MOVS r0,#42 requires CPSR flag writes, which are not in milestone 0.1 IR.
-    Equal(ArmOp.Unknown, ArmDecoder.Decode(0xE3B0002Au, 0x1000).Op);
+    var instruction = ArmDecoder.Decode(0xE1500001u, 0x1000); // CMP r0,r1
+    Equal(ArmOp.CompareRegister, instruction.Op);
+    Equal(0, instruction.Rn);
+    Equal(1, instruction.Rm);
 }
 
-static void RejectByteLoad()
+static void DecodeArmStack()
 {
-    // LDRB r0,[r1] must not be silently lowered as LDR.
-    Equal(ArmOp.Unknown, ArmDecoder.Decode(0xE5D10000u, 0x1000).Op);
+    var push = ArmDecoder.Decode(0xE92D4070u, 0x1000); // PUSH {r4-r6,lr}
+    Equal(ArmOp.Push, push.Op);
+    Equal((ushort)0x4070, push.RegisterList);
+    var pop = ArmDecoder.Decode(0xE8BD8070u, 0x1004); // POP {r4-r6,pc}
+    Equal(ArmOp.Pop, pop.Op);
+    True(pop.TerminatesBlock);
+}
+
+static void DecodeMultipleTransfer()
+{
+    var instruction = ArmDecoder.Decode(0xE88D1004u, 0x1000); // STMIA sp,{r2,r12}
+    Equal(ArmOp.StoreMultiple, instruction.Op);
+    Equal(13, instruction.Rn);
+    Equal((ushort)0x1004, instruction.RegisterList);
+    True(instruction.Increment && instruction.PostIndex && !instruction.WriteBack);
+}
+
+static void DecodeLogicalImmediate()
+{
+    Equal(ArmOp.AndImmediate, ArmDecoder.Decode(0xE20000FFu, 0x1000).Op); // AND r0,r0,#255
+    Equal(ArmOp.OrImmediate, ArmDecoder.Decode(0xE3811C01u, 0x1004).Op); // ORR r1,r1,#256
+    Equal(ArmOp.BitClearImmediate, ArmDecoder.Decode(0xE3C22007u, 0x1008).Op); // BIC r2,r2,#7
+    Equal(ArmOp.Nop, ArmDecoder.Decode(0xE320F000u, 0x100C).Op);
+    Equal(ArmOp.MoveNotImmediate, ArmDecoder.Decode(0xE3E01001u, 0x100C).Op);
+    Equal(ArmOp.TestImmediate, ArmDecoder.Decode(0xE3100003u, 0x100C).Op);
+    var shifted = ArmDecoder.Decode(0xE1B01F80u, 0x1010); // MOVS r1,r0,LSL #31
+    Equal(ArmOp.MoveRegister, shifted.Op);
+    Equal(ArmShiftType.Lsl, shifted.ShiftType);
+    Equal((byte)31, shifted.ShiftAmount);
+    True(shifted.SetFlags);
+}
+
+static void DecodeBlxRegister()
+{
+    var instruction = ArmDecoder.Decode(0xE12FFF30u, 0x1000); // BLX r0
+    Equal(ArmOp.BranchLinkExchange, instruction.Op);
+    Equal(0, instruction.Rm);
+    True(instruction.TerminatesBlock);
+}
+
+static void DecodeFlagSettingArithmetic()
+{
+    var instruction = ArmDecoder.Decode(0xE2900001u, 0x1000); // ADDS r0,r0,#1
+    Equal(ArmOp.AddImmediate, instruction.Op);
+    True(instruction.SetFlags);
+}
+
+static void DecodeByteMemory()
+{
+    var load = ArmDecoder.Decode(0xE5D10003u, 0x1000); // LDRB r0,[r1,#3]
+    Equal(ArmOp.LoadByteImmediate, load.Op);
+    Equal(0, load.Rd);
+    Equal(1, load.Rn);
+    Equal(3u, load.Immediate);
+    Equal(ArmOp.StoreByteImmediate, ArmDecoder.Decode(0xE5C10003u, 0x1004).Op);
+}
+
+static void DecodeSignedMemoryAndTls()
+{
+    Equal(ArmOp.LoadSignedByteImmediate, ArmDecoder.Decode(0xE1D000D0u, 0x1000).Op);
+    Equal(ArmOp.LoadSignedHalfwordImmediate, ArmDecoder.Decode(0xE1D000F2u, 0x1004).Op);
+    var tls = ArmDecoder.Decode(0xEE1D4F70u, 0x1008);
+    Equal(ArmOp.ReadThreadPointer, tls.Op);
+    Equal(4, tls.Rd);
 }
 
 static void TranslateBlock()
@@ -214,6 +296,75 @@ static void ExecuteMemory()
     Equal(0x12345678u, cpu.Registers[2]);
 }
 
+static void ExecuteMemoryWriteback()
+{
+    // STR r0,[r1,#4]!; LDR r2,[r1],#-4; BX lr
+    var block = ArmToIrTranslator.TranslateBlock(Words(0xE5A10004u, 0xE4112004u, 0xE12FFF1Eu), 0x100000);
+    var cpu = new ReferenceCpu();
+    var memory = new GuestMemory(0x200000, 64);
+    cpu.Registers[0] = 0xAABBCCDDu;
+    cpu.Registers[1] = 0x200000u;
+    IrInterpreter.Execute(block, cpu, memory);
+    Equal(0xAABBCCDDu, memory.Load32(0x200004));
+    Equal(0xAABBCCDDu, cpu.Registers[2]);
+    Equal(0x200000u, cpu.Registers[1]);
+}
+
+static void ExecuteByteAndLogical()
+{
+    // STRB r0,[r1,#3]; LDRB r2,[r1,#3]; BIC r3,r2,#7; ORR r3,r3,#1; BX lr
+    var block = ArmToIrTranslator.TranslateBlock(
+        Words(0xE5C10003u, 0xE5D12003u, 0xE3C23007u, 0xE3833001u, 0xE12FFF1Eu), 0x100000);
+    var cpu = new ReferenceCpu();
+    var memory = new GuestMemory(0x200000, 64);
+    cpu.Registers[0] = 0x123456ABu;
+    cpu.Registers[1] = 0x200000u;
+    IrInterpreter.Execute(block, cpu, memory);
+    Equal((byte)0xAB, memory.Load8(0x200003));
+    Equal(0xABu, cpu.Registers[2]);
+    Equal(0xA9u, cpu.Registers[3]);
+}
+
+static void ExecuteSignedMemoryAndTls()
+{
+    // LDRSB r0,[r1]; LDRSH r2,[r1,#2]; MRC p15,0,r4,c13,c0,3; BX lr
+    var block = ArmToIrTranslator.TranslateBlock(
+        Words(0xE1D100D0u, 0xE1D120F2u, 0xEE1D4F70u, 0xE12FFF1Eu), 0x100000);
+    var cpu = new ReferenceCpu { ThreadPointer = 0xDEAD0000u };
+    var memory = new GuestMemory(0x200000, 64);
+    cpu.Registers[1] = 0x200000;
+    memory.Store8(0x200000, 0x80);
+    memory.Store16(0x200002, 0x8001);
+    IrInterpreter.Execute(block, cpu, memory);
+    Equal(0xFFFFFF80u, cpu.Registers[0]);
+    Equal(0xFFFF8001u, cpu.Registers[2]);
+    Equal(0xDEAD0000u, cpu.Registers[4]);
+}
+
+static void ExecuteShiftedLogicalFlags()
+{
+    // MOV r0,#1; MOVS r1,r0,LSL #31; ANDS r2,r1,#0x80000000; BX lr
+    var block = ArmToIrTranslator.TranslateBlock(
+        Words(0xE3A00001u, 0xE1B01F80u, 0xE2112102u, 0xE12FFF1Eu), 0x100000);
+    var cpu = new ReferenceCpu();
+    IrInterpreter.Execute(block, cpu, new GuestMemory(0x200000, 64));
+    Equal(0x80000000u, cpu.Registers[1]);
+    Equal(0x80000000u, cpu.Registers[2]);
+    True(cpu.Negative && !cpu.Zero && cpu.Carry && !cpu.Overflow);
+}
+
+static void ExecuteArithmeticFlags()
+{
+    // MVN r0,#0; ADDS r1,r0,#1; TST r0,#1; SUBS r2,r1,#1; BX lr
+    var block = ArmToIrTranslator.TranslateBlock(
+        Words(0xE3E00000u, 0xE2901001u, 0xE3100001u, 0xE2512001u, 0xE12FFF1Eu), 0x100000);
+    var cpu = new ReferenceCpu();
+    IrInterpreter.Execute(block, cpu, new GuestMemory(0x200000, 64));
+    Equal(0u, cpu.Registers[1]);
+    Equal(uint.MaxValue, cpu.Registers[2]);
+    True(cpu.Negative && !cpu.Zero && !cpu.Carry && !cpu.Overflow);
+}
+
 static void ExecuteCall()
 {
     var block = ArmToIrTranslator.TranslateBlock(Words(0xEB000002u), 0x1000);
@@ -222,6 +373,38 @@ static void ExecuteCall()
     Equal(HaltReason.Call, result.Reason);
     EqualNullableUInt(0x1010u, result.Target);
     Equal(0x1004u, cpu.Registers[14]);
+}
+
+static void ExecutePushPop()
+{
+    // PUSH {r4,lr}; MOV r4,#42; POP {r4,pc}
+    var block = ArmToIrTranslator.TranslateBlock(Words(0xE92D4010u, 0xE3A0402Au, 0xE8BD8010u), 0x1000);
+    var cpu = new ReferenceCpu();
+    var memory = new GuestMemory(0x200000, 0x100);
+    cpu.Registers[4] = 7;
+    cpu.Registers[13] = 0x200100;
+    cpu.Registers[14] = 0x12345678;
+    var result = IrInterpreter.Execute(block, cpu, memory);
+    Equal(7u, cpu.Registers[4]);
+    Equal(0x200100u, cpu.Registers[13]);
+    Equal(HaltReason.JumpRegister, result.Reason);
+    EqualNullableUInt(0x12345678u, result.Target);
+}
+
+static void ExecuteMultipleTransfer()
+{
+    // STMIA r1!,{r0,r2}; SUB r1,r1,#8; LDMIA r1!,{r3,r4}; BX lr
+    var block = ArmToIrTranslator.TranslateBlock(
+        Words(0xE8A10005u, 0xE2411008u, 0xE8B10018u, 0xE12FFF1Eu), 0x1000);
+    var cpu = new ReferenceCpu();
+    var memory = new GuestMemory(0x200000, 0x100);
+    cpu.Registers[0] = 11;
+    cpu.Registers[1] = 0x200020;
+    cpu.Registers[2] = 22;
+    IrInterpreter.Execute(block, cpu, memory);
+    Equal(11u, cpu.Registers[3]);
+    Equal(22u, cpu.Registers[4]);
+    Equal(0x200028u, cpu.Registers[1]);
 }
 
 static void InspectThreeDsContainer()
@@ -274,6 +457,96 @@ static void LoadArmElf()
     Equal(8u, image.LoadSegments[0].MemorySize);
     True(image.LoadSegments[0].Executable && image.LoadSegments[0].Readable && !image.LoadSegments[0].Writable);
     Equal((byte)0, image.LoadSegments[0].Data[7]);
+}
+
+static void DecompressBackwardLz()
+{
+    // Three trailing literals seed a 15-byte match. Distinct seed bytes catch copy-index errors.
+    byte[] compressed = [0, 0, 0, 0x00, 0xC0, (byte)'A', (byte)'B', (byte)'C', 0x10,
+        0x11, 0x00, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00];
+    var output = BackwardLz.Decompress(compressed);
+    Equal(18, output.Length);
+    Equal("ABCABCABCABCABCABC", System.Text.Encoding.ASCII.GetString(output));
+}
+
+static void LoadCartridgeExecutable()
+{
+    var root = Path.Combine(Path.GetTempPath(), "PocketRecompTests", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        var path = Path.Combine(root, "fixture.3ds");
+        CreateSyntheticCartridge(path);
+        var executable = CartridgeReader.LoadExecutableAsync(path).GetAwaiter().GetResult();
+        Equal("CTR-P-TEST", executable.Partition.Header.ProductCode);
+        Equal("TestApp", executable.CodeSet.Name);
+        Equal(0x00100000u, executable.CodeSet.TextAddress);
+        Equal(0x1000, executable.Code.Length);
+        Equal(0xE12FFF1Eu, BinaryPrimitives.ReadUInt32LittleEndian(executable.Code));
+        Equal(64, executable.MappedCodeSha256.Length);
+    }
+    finally
+    {
+        Directory.Delete(root, recursive: true);
+    }
+}
+
+static void PrepareNativeBuild()
+{
+    var root = Path.Combine(Path.GetTempPath(), "PocketRecompTests", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        var cartridgePath = Path.Combine(root, "fixture.3ds");
+        var outputPath = Path.Combine(root, "output");
+        CreateSyntheticCartridge(cartridgePath);
+        var result = NativeBuildPipeline.PrepareAsync(cartridgePath, outputPath, []).GetAwaiter().GetResult();
+        Equal(NativeBuildStatus.NativeLinkPending, result.Report.Status);
+        Equal(1, result.Report.ReachableBlocks);
+        Equal(1, result.Report.ReachableInstructions);
+        Equal(0, result.Report.UnsupportedEncodings.Count);
+        True(!result.Report.NativeExecutableProduced);
+        True(File.Exists(result.ReportPath));
+        True(File.ReadAllText(result.ReportPath).Contains("native-link-pending", StringComparison.Ordinal));
+    }
+    finally
+    {
+        Directory.Delete(root, recursive: true);
+    }
+}
+
+static void CreateSyntheticCartridge(string path)
+{
+    var image = new byte[0x2000];
+    "NCSD"u8.CopyTo(image.AsSpan(0x100));
+    BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x104), 0x10);
+    BinaryPrimitives.WriteUInt64LittleEndian(image.AsSpan(0x108), 0x000400000FF40A00);
+    BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x120), 1);
+    BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(0x124), 0x0F);
+
+    const int ncch = 0x200;
+    "NCCH"u8.CopyTo(image.AsSpan(ncch + 0x100));
+    BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(ncch + 0x104), 0x0F);
+    BinaryPrimitives.WriteUInt64LittleEndian(image.AsSpan(ncch + 0x108), 0x000400000FF40A00);
+    BinaryPrimitives.WriteUInt64LittleEndian(image.AsSpan(ncch + 0x118), 0x000400000FF40A00);
+    "CTR-P-TEST"u8.CopyTo(image.AsSpan(ncch + 0x150));
+    BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(ncch + 0x180), 0x400);
+    image[ncch + 0x18F] = 0x04;
+    BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(ncch + 0x1A0), 3);
+    BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(ncch + 0x1A4), 9);
+
+    const int exheader = ncch + 0x200;
+    "TestApp"u8.CopyTo(image.AsSpan(exheader));
+    BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(exheader + 0x10), 0x00100000);
+    BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(exheader + 0x14), 1);
+    BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(exheader + 0x18), 4);
+    BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(exheader + 0x1C), 0x4000);
+
+    const int exefs = ncch + 0x600;
+    ".code"u8.CopyTo(image.AsSpan(exefs));
+    BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(exefs + 12), 0x1000);
+    BinaryPrimitives.WriteUInt32LittleEndian(image.AsSpan(exefs + 0x200), 0xE12FFF1E);
+    File.WriteAllBytes(path, image);
 }
 
 static void TopLayout()
