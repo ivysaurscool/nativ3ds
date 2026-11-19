@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PocketRecomp.Core", "src\PocketRecomp.Core\PocketRecomp.Core.csproj", "{8D3384EA-43B8-4692-80D0-A137B43655AF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PocketRecomp.Cli", "src\PocketRecomp.Cli\PocketRecomp.Cli.csproj", "{1CF4EA37-B741-4418-A2DD-A350E933D743}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PocketRecomp.Tests", "tests\PocketRecomp.Tests\PocketRecomp.Tests.csproj", "{0D5A0410-AED7-4D48-A69A-98CE222BA926}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{8D3384EA-43B8-4692-80D0-A137B43655AF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8D3384EA-43B8-4692-80D0-A137B43655AF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8D3384EA-43B8-4692-80D0-A137B43655AF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8D3384EA-43B8-4692-80D0-A137B43655AF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1CF4EA37-B741-4418-A2DD-A350E933D743}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1CF4EA37-B741-4418-A2DD-A350E933D743}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1CF4EA37-B741-4418-A2DD-A350E933D743}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1CF4EA37-B741-4418-A2DD-A350E933D743}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0D5A0410-AED7-4D48-A69A-98CE222BA926}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0D5A0410-AED7-4D48-A69A-98CE222BA926}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0D5A0410-AED7-4D48-A69A-98CE222BA926}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0D5A0410-AED7-4D48-A69A-98CE222BA926}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

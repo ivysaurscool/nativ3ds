@@ -1,0 +1,14 @@
+{
+  "formatVersion": 1,
+  "name": "Open-source homebrew sample",
+  "segments": [
+    {
+      "name": "text",
+      "path": "code.bin",
+      "guestAddress": "0x00100000",
+      "mode": "arm",
+      "entryPoints": ["0x00100000"],
+      "sha256": null
+    }
+  ]
+}

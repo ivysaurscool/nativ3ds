@@ -1,0 +1,18 @@
+{
+  "display": {
+    "width": 1920,
+    "height": 1080,
+    "layout": "top-only",
+    "filter": "fsr",
+    "integerScaling": false
+  },
+  "timing": {
+    "guestFps": 60,
+    "presentationFps": 120,
+    "vsync": true
+  },
+  "input": {
+    "touchMode": "mouse",
+    "motionMode": "controller"
+  }
+}
